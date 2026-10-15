@@ -1,0 +1,21 @@
+# Baseline only. Never apply this while the engine is running: they would fight.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: playback-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: playback-api
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # same CPU target as the engine's reactive arm, so the comparison isolates
+          # prediction + warm nodes rather than a difference in thresholds
+          averageUtilization: 80

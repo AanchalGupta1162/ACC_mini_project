@@ -1,0 +1,16 @@
+# Applied after kube-prometheus-stack (needs the ServiceMonitor CRD).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: streaming-services
+  namespace: monitoring
+  labels: { release: monitoring }
+spec:
+  namespaceSelector:
+    matchNames: ["default"]
+  selector:
+    matchLabels: { app: playback-api }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 5s      # fast scrape so the forecaster sees a smooth RPS series

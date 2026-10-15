@@ -1,0 +1,46 @@
+# Lean kube-prometheus-stack for an 8 GB laptop VM. Everything runs on the k3d server node.
+alertmanager: { enabled: false }
+nodeExporter: { enabled: false }       # hostPath mounts are unreliable inside k3d
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+defaultRules: { create: false }
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 12h
+    nodeSelector: { role: system }
+    serviceMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 150m, memory: 512Mi }
+    additionalScrapeConfigs:
+      # the engine runs on the laptop, outside the cluster
+      - job_name: autoscaler-engine
+        static_configs:
+          # host.k3d.internal resolves to the Rancher VM, not macOS; this reaches the laptop
+          - targets: ["host.docker.internal:9900"]
+
+prometheusOperator:
+  nodeSelector: { role: system }
+
+kube-state-metrics:
+  nodeSelector: { role: system }
+
+grafana:
+  enabled: true
+  adminPassword: admin
+  defaultDashboardsEnabled: false
+  nodeSelector: { role: system }
+  service:
+    type: NodePort
+    nodePort: 30300
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard

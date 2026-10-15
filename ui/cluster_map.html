@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JioHotstar · Predictive-Reactive Autoscaler</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #141a2e; --ink: #eef1f8; --muted: #8e9ab8;
+    --active: #38bdf8; --reserve: #5b6680; --promoted: #22c55e; --cold: #f59e0b;
+    --pending: #ef4444; --ready: #22c55e; --warming: #eab308;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 22px 26px; }
+  h1 { margin: 0 0 2px; font-size: 25px; letter-spacing: -0.3px; }
+  h1 span { color: var(--active); }
+  .sub { color: var(--muted); margin-bottom: 18px; font-size: 14px; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { background: var(--panel); border-radius: 12px; padding: 12px 18px; min-width: 120px; }
+  .stat b { display: block; font-size: 27px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .decision { background: var(--panel); border-left: 4px solid var(--active); border-radius: 8px;
+              padding: 11px 15px; margin-bottom: 18px; font-family: ui-monospace, SFMono-Regular, monospace;
+              font-size: 13px; color: #cfe0ff; min-height: 42px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .node { background: var(--panel); border: 2px solid #253050; border-radius: 14px; padding: 14px;
+          transition: border-color .4s, box-shadow .4s, opacity .4s; }
+  .node.system { opacity: .65; }
+  .node.active { border-color: var(--active); }
+  .node.warm-reserve { border-style: dashed; border-color: var(--reserve); opacity: .55; }
+  .node.promoted { border-color: var(--promoted); box-shadow: 0 0 22px rgba(34,197,94,.45); }
+  .node.cold { border-color: var(--cold); box-shadow: 0 0 22px rgba(245,158,11,.35); }
+  .node h2 { font-size: 14px; margin: 0 0 2px; }
+  .role { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .node.promoted .role { color: var(--promoted); }
+  .node.cold .role { color: var(--cold); }
+  .pods { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; min-height: 26px; }
+  .pod { width: 20px; height: 20px; border-radius: 6px; background: var(--ready);
+         transition: background .3s, transform .3s; }
+  .pod.warming { background: var(--warming); animation: pulse 1s infinite; }
+  .pod.mock { background: #64748b; border-radius: 50%; width: 13px; height: 13px; margin-top: 3px; }
+  .pod.new { transform: scale(0); animation: pop .45s forwards; }
+  @keyframes pop { to { transform: scale(1); } }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .pending { margin-top: 18px; background: rgba(239,68,68,.12); border: 1px dashed var(--pending);
+             border-radius: 12px; padding: 12px 15px; }
+  .pending .pod { background: var(--pending); }
+  .legend { margin-top: 20px; color: var(--muted); font-size: 12.5px; display: flex; gap: 20px; flex-wrap: wrap; }
+  .key { display: inline-block; width: 12px; height: 12px; border-radius: 4px; vertical-align: -2px; margin-right: 5px; }
+</style>
+</head>
+<body>
+  <h1><span>JioHotstar</span> live cluster map</h1>
+  <div class="sub">playback-api scaled by the predictive-reactive engine · reserve nodes stay dark until the arbiter wakes one</div>
+
+  <div class="stats">
+    <div class="stat"><b id="s-pods">-</b><span>App pods</span></div>
+    <div class="stat"><b id="s-ready">-</b><span>Ready</span></div>
+    <div class="stat"><b id="s-pending">-</b><span>Unplaced</span></div>
+    <div class="stat"><b id="s-nodes">-</b><span>Schedulable nodes</span></div>
+    <div class="stat"><b id="s-target">-</b><span>Arbiter target</span></div>
+  </div>
+
+  <div class="decision" id="decision">waiting for the engine…</div>
+  <div class="grid" id="grid"></div>
+  <div id="pending-wrap"></div>
+
+  <div class="legend">
+    <span><i class="key" style="background:#22c55e"></i>Ready pod</span>
+    <span><i class="key" style="background:#eab308"></i>Warming up (startup delay)</span>
+    <span><i class="key" style="background:#ef4444"></i>Unplaced pod</span>
+    <span><i class="key" style="background:#64748b;border-radius:50%"></i>Mock service</span>
+    <span><i class="key" style="border:2px dashed #5b6680;background:transparent"></i>Warm reserve (cordoned)</span>
+    <span><i class="key" style="background:#22c55e;opacity:.6"></i>Promoted reserve</span>
+    <span><i class="key" style="background:#f59e0b"></i>Cold-built node</span>
+  </div>
+
+<script>
+const seen = new Set();
+
+function podEl(p) {
+  const d = document.createElement('div');
+  const mock = p.app !== 'playback-api';
+  d.className = 'pod' + (mock ? ' mock' : (p.ready ? '' : ' warming')) + (seen.has(p.name) ? '' : ' new');
+  d.title = `${p.name} · ${p.phase}${p.ready ? ' · ready' : ''}`;
+  seen.add(p.name);
+  return d;
+}
+
+async function tick() {
+  let s;
+  try { s = await (await fetch('/api/state')).json(); }
+  catch (e) { document.getElementById('decision').textContent = 'cluster unreachable…'; return; }
+
+  document.getElementById('s-pods').textContent = s.summary.pods;
+  document.getElementById('s-ready').textContent = s.summary.ready;
+  document.getElementById('s-pending').textContent = s.pending.length;
+  document.getElementById('s-nodes').textContent = s.summary.schedulable_nodes;
+  document.getElementById('s-target').textContent = (s.decision && s.decision.target) || '-';
+  document.getElementById('decision').textContent =
+    s.decision ? `${s.decision.reason}` : 'engine not running (start engine/main.py with --log-csv)';
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  for (const n of s.nodes) {
+    const card = document.createElement('div');
+    card.className = 'node ' + n.state;
+    const label = { 'system': 'control plane', 'active': 'active node', 'warm-reserve': 'warm reserve · cordoned',
+                    'promoted': 'promoted reserve · live', 'cold': 'cold-built node' }[n.state] || n.state;
+    card.innerHTML = `<h2>${n.name}</h2><div class="role">${label}</div>`;
+    const pods = document.createElement('div');
+    pods.className = 'pods';
+    n.pods.forEach(p => pods.appendChild(podEl(p)));
+    card.appendChild(pods);
+    grid.appendChild(card);
+  }
+
+  const wrap = document.getElementById('pending-wrap');
+  wrap.innerHTML = '';
+  if (s.pending.length) {
+    const box = document.createElement('div');
+    box.className = 'pending';
+    box.innerHTML = `<b>${s.pending.length} pod(s) with nowhere to run</b> — the scheduler is waiting for capacity`;
+    const pods = document.createElement('div');
+    pods.className = 'pods';
+    s.pending.forEach(p => pods.appendChild(podEl(p)));
+    box.appendChild(pods);
+    wrap.appendChild(box);
+  }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
