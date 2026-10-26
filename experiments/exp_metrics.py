@@ -61,3 +61,15 @@ def count_events(rows):
         for key in ("uncordon", "cordon", "cold_create"):
             events[key] += int(r.get(key) or 0)
     return events
+
+
+def summary_rows(rows, keys):
+    """Per-mode mean/std of the numeric columns in trials.csv rows (strings, '' = missing)."""
+    out = []
+    for mode in dict.fromkeys(r["mode"] for r in rows):
+        mine = [r for r in rows if r["mode"] == mode]
+        row = {"mode": mode, "n": len(mine)}
+        for k in keys:
+            row[k] = mean_std([float(r[k]) if r.get(k) not in (None, "") else None for r in mine])
+        out.append(row)
+    return out

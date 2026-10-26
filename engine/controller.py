@@ -1,4 +1,4 @@
-"""One control-loop cycle: read both arms, arbitrate, then act on pods and nodes."""
+"""One control-loop cycle: read every arm, arbitrate, then act on pods and nodes."""
 import time
 from pathlib import Path
 
@@ -11,7 +11,7 @@ FAULT_DIR_DEFAULT = Path(__file__).resolve().parent / "faults"
 class Controller:
     def __init__(self, cluster, reactive_fn=None, predictive_arm=None, log=None, exporter=None,
                  clock=time.time, fault_dir=FAULT_DIR_DEFAULT, allow_cold=ENABLE_COLD_PATH,
-                 rps_fn=None):
+                 rps_fn=None, demand_arm=None):
         self.cluster = cluster
         self.reactive_fn = reactive_fn
         self.predictive_arm = predictive_arm
@@ -21,6 +21,7 @@ class Controller:
         self.fault_dir = Path(fault_dir)
         self.allow_cold = allow_cold
         self.rps_fn = rps_fn
+        self.demand_arm = demand_arm
         self.last_change = 0.0
 
     def _run_arm(self, name, fn):
@@ -48,10 +49,11 @@ class Controller:
         current = self.cluster.current_replicas()
         reactive = self._run_arm("reactive", (lambda: self.reactive_fn(current)) if self.reactive_fn else None)
         predictive = self._run_arm("predictive", self.predictive_arm.compute if self.predictive_arm else None)
+        demand = self._run_arm("demand", self.demand_arm.compute if self.demand_arm else None)
         schedulable, cordoned, promoted = self.cluster.node_counts()
 
         d = decide(reactive, predictive, current, schedulable, cordoned, promoted, now,
-                   self.last_change, allow_cold=self.allow_cold)
+                   self.last_change, allow_cold=self.allow_cold, demand=demand)
 
         # promote capacity first so new pods land on a schedulable node immediately
         for name in self.cluster.reserve_names(unschedulable=True)[: d.uncordon]:
@@ -72,13 +74,14 @@ class Controller:
         forecast_rps = getattr(self.predictive_arm, "forecast_rps", None)
         observed_rps = self._observed_rps()
         if self.exporter:
-            self.exporter.publish(d, reactive, predictive, forecast_rps, current, schedulable)
+            self.exporter.publish(d, reactive, predictive, forecast_rps, current, schedulable, demand=demand)
         if self.log:
             self.log.write({
                 "timestamp": round(now, 3),
                 "observed_rps": observed_rps,
                 "reactive_target": reactive,
                 "predictive_target": predictive,
+                "demand_target": demand,
                 "forecast_rps": forecast_rps,
                 "forecast_made_at": getattr(self.predictive_arm, "last_run", None),
                 "current_replicas": current,

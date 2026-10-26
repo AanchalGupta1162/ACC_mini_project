@@ -54,3 +54,9 @@ def test_summary_counts_replicas_ready_and_schedulable_nodes():
     assert summary["pods"] == 2
     assert summary["ready"] == 1
     assert summary["schedulable_nodes"] == 2  # two active agents; reserves are cordoned
+
+
+def test_summary_counts_only_the_autoscaled_app_for_capacity():
+    pods = [pod("p1", "agent-0"), pod("m1", "agent-0", app="catalog-mock"), pod("m2", "agent-1", app="catalog-mock")]
+    summary = build_state(NODES, pods)["summary"]
+    assert summary["app_pods"] == 1 and summary["app_ready"] == 1

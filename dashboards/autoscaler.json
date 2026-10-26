@@ -79,8 +79,8 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Scaling decisions: both arms and the arbiter",
-      "description": "The arbiter line is always the higher of the two arms; ready pods trail it by the pod startup time.",
+      "title": "Scaling decisions: three arms and the arbiter",
+      "description": "The arbiter line is always the highest of the three arms; ready pods trail it by the pod startup time.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -134,6 +134,15 @@
           "expr": "autoscaler_predictive_target > -1",
           "legendFormat": "predictive arm wants",
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "autoscaler_demand_target > -1",
+          "legendFormat": "demand arm wants",
+          "refId": "E"
         },
         {
           "datasource": {

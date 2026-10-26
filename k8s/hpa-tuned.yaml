@@ -1,0 +1,21 @@
+# Baseline only. Never apply this while the engine is running: they would fight.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: playback-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: playback-api
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # TUNED baseline: a lower CPU target is the usual practitioner fix for slow scale-up; the untuned
+          # baseline (hpa.yaml) uses 80% so the engine comparison isolates what it adds
+          averageUtilization: 50

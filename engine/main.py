@@ -7,6 +7,7 @@ import reactive
 from config import CYCLE_SECONDS, ENABLE_COLD_PATH, EXPORTER_PORT
 from controller import FAULT_DIR_DEFAULT, Controller
 from decision_log import DecisionLog
+from demand import DemandArm
 from exporter import Exporter
 from predictive import PredictiveArm
 from reserve_pool import ClusterAdapter
@@ -15,8 +16,9 @@ from reserve_pool import ClusterAdapter
 def build_controller(mode, log_path=None, allow_cold=ENABLE_COLD_PATH, with_exporter=True):
     return Controller(
         ClusterAdapter(),
-        reactive_fn=reactive.compute if mode in ("both", "reactive") else None,
-        predictive_arm=PredictiveArm() if mode in ("both", "predictive") else None,
+        reactive_fn=reactive.compute if mode in ("both", "reactive", "full") else None,
+        predictive_arm=PredictiveArm() if mode in ("both", "predictive", "full") else None,
+        demand_arm=DemandArm() if mode in ("demand", "full") else None,
         log=DecisionLog(log_path) if log_path else None,
         exporter=Exporter() if with_exporter else None,
         allow_cold=allow_cold,
@@ -26,8 +28,8 @@ def build_controller(mode, log_path=None, allow_cold=ENABLE_COLD_PATH, with_expo
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Predictive-reactive autoscaling engine")
-    parser.add_argument("--mode", choices=["both", "reactive", "predictive"], default="both",
-                        help="which arm(s) to run (the variance experiment uses all three)")
+    parser.add_argument("--mode", choices=["both", "reactive", "predictive", "demand", "full"], default="full",
+                        help="arms to run: both = reactive+predictive, full = both + demand")
     parser.add_argument("--log-csv", help="append one row per cycle to this CSV")
     parser.add_argument("--once", action="store_true", help="run a single cycle and exit")
     parser.add_argument("--no-cold", action="store_true",
@@ -39,7 +41,7 @@ def main(argv=None):
     controller = build_controller(args.mode, args.log_csv, not args.no_cold, not args.no_exporter)
     print(f"[engine] mode={args.mode} cycle={CYCLE_SECONDS}s "
           f"{'' if args.no_exporter else f'metrics on :{EXPORTER_PORT} '}"
-          f"kill an arm with: touch {FAULT_DIR_DEFAULT}/fault-reactive|fault-predictive", flush=True)
+          f"kill an arm with: touch {FAULT_DIR_DEFAULT}/fault-reactive|fault-predictive|fault-demand", flush=True)
     while True:
         try:
             controller.run_cycle()

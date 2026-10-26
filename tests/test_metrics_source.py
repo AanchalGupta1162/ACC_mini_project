@@ -66,3 +66,15 @@ def test_rps_history_returns_values_only(monkeypatch):
     payload = {"data": {"result": [{"values": [[100.0, "12"], [115.0, "15"]]}]}}
     monkeypatch.setattr(ms.requests, "get", fake_get(payload, {}))
     assert ms.rps_history() == [12.0, 15.0]
+
+
+def test_p95_latency_is_converted_to_milliseconds(monkeypatch):
+    payload = {"data": {"result": [{"value": [1.0, "0.032"]}]}}
+    monkeypatch.setattr(ms.requests, "get", fake_get(payload, {}))
+    assert ms.p95_latency_ms() == pytest.approx(32.0)
+
+
+def test_p95_latency_is_unknown_when_prometheus_returns_nan(monkeypatch):
+    payload = {"data": {"result": [{"value": [1.0, "NaN"]}]}}
+    monkeypatch.setattr(ms.requests, "get", fake_get(payload, {}))
+    assert ms.p95_latency_ms() is None

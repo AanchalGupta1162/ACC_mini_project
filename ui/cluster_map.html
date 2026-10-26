@@ -47,23 +47,88 @@
   .pending .pod { background: var(--pending); }
   .legend { margin-top: 20px; color: var(--muted); font-size: 12.5px; display: flex; gap: 20px; flex-wrap: wrap; }
   .key { display: inline-block; width: 12px; height: 12px; border-radius: 4px; vertical-align: -2px; margin-right: 5px; }
+  .banner { border-radius: 14px; padding: 16px 20px; margin-bottom: 16px; border: 1px solid #253050;
+            background: var(--panel); display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .banner .big { font-size: 22px; font-weight: 650; letter-spacing: -.2px; }
+  .banner .why { color: var(--muted); font-size: 13.5px; margin-top: 3px; }
+  .banner.scaling-up { border-color: var(--cold); box-shadow: 0 0 24px rgba(245,158,11,.25); }
+  .banner.scaling-down { border-color: var(--active); }
+  .banner.steady { border-color: var(--promoted); }
+  .badge { margin-left: auto; padding: 8px 14px; border-radius: 999px; font-weight: 650; font-size: 14px; white-space: nowrap; }
+  .badge.ok { background: rgba(34,197,94,.16); color: #4ade80; border: 1px solid #22c55e; }
+  .badge.bad { background: rgba(245,158,11,.16); color: #fbbf24; border: 1px solid #f59e0b; }
+  .two { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
+  @media (max-width: 1000px) { .two { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border-radius: 14px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 2px; font-size: 15px; }
+  .card .cap { color: var(--muted); font-size: 12.5px; margin-bottom: 8px; }
+  canvas { width: 100%; height: 230px; display: block; }
+  .arms { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 8px; }
+  .arm { border: 1px solid #253050; border-radius: 10px; padding: 8px 10px; text-align: center; }
+  .arm b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
+  .arm span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+  .arm.win { border-color: var(--promoted); background: rgba(34,197,94,.10); }
+  .arm.out b { color: #475066; font-size: 15px; padding: 6px 0; }
+  .arm.final { border-color: var(--active); }
+  .events { list-style: none; margin: 0; padding: 0; font-size: 13px; max-height: 250px; overflow: hidden; }
+  .events li { padding: 6px 0; border-bottom: 1px solid #1f2842; }
+  .events time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  details { margin-top: 18px; background: var(--panel); border-radius: 12px; padding: 12px 16px; font-size: 13.5px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  td, th { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid #1f2842; font-variant-numeric: tabular-nums; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
 </style>
 </head>
 <body>
-  <h1><span>JioHotstar</span> live cluster map</h1>
-  <div class="sub">playback-api scaled by the predictive-reactive engine · reserve nodes stay dark until the arbiter wakes one</div>
+  <h1><span>JioHotstar</span> autoscaler - live view</h1>
+  <div class="sub">A match-day traffic spike hits the app. Watch the engine add pods <b>before</b> users feel it. The rule to check: the green line (what the cluster can serve) stays above the blue line (traffic).</div>
 
-  <div class="stats">
-    <div class="stat"><b id="s-pods">-</b><span>App pods</span></div>
-    <div class="stat"><b id="s-ready">-</b><span>Ready</span></div>
-    <div class="stat"><b id="s-pending">-</b><span>Unplaced</span></div>
-    <div class="stat"><b id="s-nodes">-</b><span>Schedulable nodes</span></div>
-    <div class="stat"><b id="s-target">-</b><span>Arbiter target</span></div>
+  <div class="banner steady" id="banner">
+    <div><div class="big" id="b-head">waiting for the engine...</div><div class="why" id="b-why"></div></div>
+    <div class="badge ok" id="b-badge">-</div>
   </div>
 
-  <div class="decision" id="decision">waiting for the engine…</div>
+  <div class="stats">
+    <div class="stat"><b id="s-rps">-</b><span>Traffic (req/s)</span></div>
+    <div class="stat"><b id="s-cap">-</b><span>Ready capacity (req/s)</span></div>
+    <div class="stat"><b id="s-ready">-</b><span>Pods ready / target</span></div>
+    <div class="stat"><b id="s-p95">-</b><span>p95 latency</span></div>
+    <div class="stat"><b id="s-pending">-</b><span>Unplaced pods</span></div>
+    <div class="stat"><b id="s-nodes">-</b><span>Schedulable nodes</span></div>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h3>Is capacity ahead of traffic?</h3>
+      <div class="cap"><span style="color:#38bdf8">&#9632;</span> traffic &nbsp; <span style="color:#22c55e">&#9632;</span> ready capacity (ready pods &times; <span id="rpp">12</span> req/s) &nbsp; <span style="color:#eef1f8">- -</span> where the engine is heading &nbsp; <span style="color:#ef4444">&#9632;</span> shortfall</div>
+      <canvas id="chart" width="1100" height="230"></canvas>
+    </div>
+    <div class="card">
+      <h3>Who decided? (3 arms &rarr; arbiter takes the highest)</h3>
+      <div class="arms">
+        <div class="arm" id="arm-reactive"><span>Reactive</span><b>-</b></div>
+        <div class="arm" id="arm-predictive"><span>Predictive</span><b>-</b></div>
+        <div class="arm" id="arm-demand"><span>Demand</span><b>-</b></div>
+        <div class="arm final"><span>Final</span><b id="arm-final">-</b></div>
+      </div>
+      <h3 style="margin-top:14px">What the engine just did</h3>
+      <ul class="events" id="events"><li>nothing yet</li></ul>
+    </div>
+  </div>
+
   <div class="grid" id="grid"></div>
   <div id="pending-wrap"></div>
+
+  <details>
+    <summary>Measured against Kubernetes HPA (same spike, 3 trials each, cold start) - from results/summary.md</summary>
+    <table>
+      <tr><th></th><th>Failed requests</th><th>p95 latency</th><th>Cost (replica-seconds)</th></tr>
+      <tr><td>HPA (80% CPU)</td><td>6.9 &plusmn; 3.4 %</td><td>2494 &plusmn; 386 ms</td><td>1270</td></tr>
+      <tr><td>This engine</td><td>0.0 &plusmn; 0.0 %</td><td>32 &plusmn; 16 ms</td><td>2270 (about 1.8&times;)</td></tr>
+    </table>
+    <p style="color:var(--muted);margin:8px 0 0">The engine trades extra capacity for no user-visible failures. Single workload, one laptop, n=3.</p>
+  </details>
 
   <div class="legend">
     <span><i class="key" style="background:#22c55e"></i>Ready pod</span>
@@ -87,18 +152,93 @@ function podEl(p) {
   return d;
 }
 
+const hist = [];           // client-side history, one point per poll
+const WINDOW = 420;        // ~7 minutes at 1 poll/second
+
+function fmtTime(t) { return new Date(t * 1000).toLocaleTimeString([], {hour12: false}); }
+
+function render(s) {
+  const st = s.story, sm = s.summary;
+  const banner = document.getElementById('banner');
+  banner.className = 'banner ' + st.phase;
+  document.getElementById('b-head').textContent = st.headline;
+  document.getElementById('b-why').textContent = st.detail;
+  const badge = document.getElementById('b-badge');
+  if (st.verdict) {
+    badge.className = 'badge ' + (st.verdict.ok ? 'ok' : 'bad');
+    badge.textContent = st.verdict.ok ? 'Capacity covers traffic' : 'Pods warming - catching up';
+    badge.title = st.verdict.text;
+  }
+  document.getElementById('rpp').textContent = st.rps_per_pod;
+  const target = (s.decision && s.decision.target) || '-';
+  document.getElementById('s-rps').textContent = st.traffic_rps.toFixed(0);
+  document.getElementById('s-cap').textContent = st.capacity_rps.toFixed(0);
+  document.getElementById('s-ready').textContent = `${sm.app_ready} / ${target}`;
+  document.getElementById('s-p95').textContent = st.p95_ms == null ? '-' : st.p95_ms.toFixed(0) + ' ms';
+  document.getElementById('s-pending').textContent = s.pending.length;
+  document.getElementById('s-nodes').textContent = sm.schedulable_nodes;
+
+  const vals = ['reactive', 'predictive', 'demand'].map(a => st.arms[a] == null ? null : Number(st.arms[a]));
+  const top = Math.max(...vals.filter(v => v != null), -1);
+  ['reactive', 'predictive', 'demand'].forEach((a, i) => {
+    const el = document.getElementById('arm-' + a);
+    const v = vals[i];
+    el.className = 'arm' + (v == null ? ' out' : (v === top ? ' win' : ''));
+    el.querySelector('b').textContent = v == null ? 'abstained' : v;
+  });
+  document.getElementById('arm-final').textContent = target;
+
+  const ev = document.getElementById('events');
+  ev.innerHTML = st.events.length ? '' : '<li>nothing yet - waiting for traffic</li>';
+  st.events.slice().reverse().forEach(e => {
+    const li = document.createElement('li');
+    li.innerHTML = `<time>${fmtTime(e.t)}</time>${e.text}`;
+    ev.appendChild(li);
+  });
+
+  hist.push({traffic: st.traffic_rps, cap: st.capacity_rps,
+             goal: (Number(target) || 0) * st.rps_per_pod});
+  if (hist.length > WINDOW) hist.shift();
+  drawChart();
+}
+
+function drawChart() {
+  const c = document.getElementById('chart'), g = c.getContext('2d');
+  const W = c.width, H = c.height, pad = 34;
+  g.clearRect(0, 0, W, H);
+  if (hist.length < 2) return;
+  const maxY = Math.max(20, ...hist.map(h => Math.max(h.traffic, h.cap, h.goal))) * 1.1;
+  const span = Math.max(hist.length, 90) - 1;   // fills left-to-right, then scrolls
+  const X = i => pad + (W - pad - 8) * i / span;
+  const Y = v => H - 20 - (H - 30) * v / maxY;
+  g.strokeStyle = '#1f2842'; g.fillStyle = '#8e9ab8'; g.font = '11px sans-serif'; g.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) {
+    const v = maxY * k / 4, y = Y(v);
+    g.beginPath(); g.moveTo(pad, y); g.lineTo(W - 8, y); g.stroke();
+    g.fillText(v.toFixed(0), 2, y + 4);
+  }
+  g.fillStyle = 'rgba(239,68,68,.35)';       // shortfall: traffic above ready capacity
+  for (let i = 1; i < hist.length; i++) {
+    if (hist[i].traffic > hist[i].cap) {
+      g.fillRect(X(i - 1), Y(hist[i].traffic), X(i) - X(i - 1) + 1, Y(hist[i].cap) - Y(hist[i].traffic));
+    }
+  }
+  const line = (key, color, width, dash) => {
+    g.beginPath(); g.setLineDash(dash || []); g.strokeStyle = color; g.lineWidth = width;
+    hist.forEach((h, i) => i ? g.lineTo(X(i), Y(h[key])) : g.moveTo(X(i), Y(h[key])));
+    g.stroke(); g.setLineDash([]);
+  };
+  line('goal', '#eef1f8', 1.5, [5, 4]);
+  line('cap', '#22c55e', 3);
+  line('traffic', '#38bdf8', 3);
+}
+
 async function tick() {
   let s;
   try { s = await (await fetch('/api/state')).json(); }
-  catch (e) { document.getElementById('decision').textContent = 'cluster unreachable…'; return; }
+  catch (e) { document.getElementById('b-head').textContent = 'cluster unreachable...'; return; }
 
-  document.getElementById('s-pods').textContent = s.summary.pods;
-  document.getElementById('s-ready').textContent = s.summary.ready;
-  document.getElementById('s-pending').textContent = s.pending.length;
-  document.getElementById('s-nodes').textContent = s.summary.schedulable_nodes;
-  document.getElementById('s-target').textContent = (s.decision && s.decision.target) || '-';
-  document.getElementById('decision').textContent =
-    s.decision ? `${s.decision.reason}` : 'engine not running (start engine/main.py with --log-csv)';
+  render(s);
 
   const grid = document.getElementById('grid');
   grid.innerHTML = '';

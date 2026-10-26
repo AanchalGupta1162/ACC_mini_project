@@ -42,6 +42,7 @@ Teardown: `make down`.
 |---|---|
 | How fast is a warm reserve node? | **~4s** of infrastructure time to promote (uncordon), vs **~20s** to build a cold node and pull the image, vs ~1.7s to use a node that is already live. Every path then pays the same 20s app warm-up. |
 | Does the predictive arm actually lead? | Yes — on a 20 → 110 rps spike it asked for more capacity at t=61s, while the reactive arm was still asking for the minimum, and it triggered the reserve promotion at t=123s. |
+| Is it better than the HPA? | On a cold-start spike (20 → 110 rps, 3 trials each): **0% failed / p95 32 ms vs the HPA's 6.9% / 2.5 s**, but at **~1.8× the replica-seconds** (2270 vs 1270). Better on user-visible damage, worse on cost, against an untuned 80%-CPU HPA. Not yet tested against a tuned HPA. See [`results/summary.md`](results/summary.md). |
 | What does the forecaster get wrong? | A sharp, never-seen spike: the trend model overshot to ~296 rps against an actual 110 (MAPE ~165%). This is the reactive arm's job, and the reason both arms exist. |
 
 Full numbers and method: [`results/summary.md`](results/summary.md).
@@ -69,10 +70,22 @@ exponential smoothing over level, trend and season. It forecasts 8 steps of 15s 
 the peak of that forecast and converts it to replicas using the measured capacity of one pod.
 Below 40 samples it abstains and the reactive arm carries the system (the cold-start argument).
 
-**Arbiter** (`engine/arbiter.py`, `engine/controller.py`) — `target = clamp(max(arms), 2, 12)`,
-with a 20-second cooldown on replica changes. Capacity is reconciled every cycle, even inside the
-cooldown, so unplaced pods get a node immediately. On the way down it hands a reserve node back.
-If **both** arms abstain it changes nothing at all and says so.
+**Demand arm** (`engine/demand.py`) — added after the first HPA comparison showed the reactive CPU
+signal under-sizing a spike (CPU saturates at the pod limit and warming pods dilute it) and the
+forecaster abstaining for its first 10 minutes. It sizes to the *observed* request rate, projected
+forward by the pod startup lead (`DEMAND_LEAD_SECONDS`, default 45 s) using the recent upward slope.
+What it measures is *served* throughput (the app counts a request when it completes), so it is not
+capped by the CPU limit the way the CPU ratio is, but it cannot see requests that time out.
+It needs 3 samples, so it works from the first minute. It is a lead-time-aware rate rule, not a
+forecaster, and it never extrapolates a falling rate downwards.
+
+**Arbiter** (`engine/arbiter.py`, `engine/controller.py`) — `target = clamp(max(arms), 2, 12)`.
+Scaling is asymmetric like the HPA's: scale-up is never delayed, scale-down waits
+`SCALE_DOWN_COOLDOWN_SECONDS` (60 s) after the last change. Capacity is reconciled every cycle and
+sized for `target + PREWARM_HEADROOM_PODS` (2), so a warm reserve node is promoted just *before*
+pods would go Pending. On the way down it hands a reserve node back. If **every** arm abstains it
+changes nothing at all and says so. Modes: `reactive`, `both` (reactive + predictive, the original
+engine), `full` (both + demand, the default).
 
 **Warm reserve pool** (`engine/reserve_pool.py`) — reserve nodes are created with the cluster,
 already have the image, and are cordoned. Promotion is one `uncordon`. When the pool is empty the
@@ -103,11 +116,11 @@ Re-run the sweep with `loadtest/calibrate.js` on different hardware.
 
 | Experiment | Command | Measures |
 |---|---|---|
-| Scaling lag + variance | `make trials` | pending pod-seconds, time-to-capacity, p95, failure rate for HPA / reactive / predictive / both over N trials |
+| Scaling lag + variance | `make trials` | pending pod-seconds, time-to-capacity, p95, failure rate for HPA / reactive / both / full over 3 trials, alternating order. `make trials-matchday` repeats it on the forecastable match-day workload |
 | Promotion latency | `make latency` | active node vs warm uncordon vs cold node build |
 | Forecast accuracy | `.venv/bin/python experiments/analyze_log.py mape results/live-decisions.csv` | MAPE at T+2 min (only scored where traffic > 5 rps) |
 | Stability / churn | `.venv/bin/python experiments/analyze_log.py churn results/*.csv` | scale and node events per run |
-| Fallback safety | `touch engine/faults/fault-predictive` (and `fault-reactive`) | each arm dies independently; both dead = no change |
+| Fallback safety | `touch engine/faults/fault-predictive` (also `fault-reactive`, `fault-demand`) | each arm dies independently; all dead = no change |
 
 Results land in `results/`.
 
@@ -123,6 +136,10 @@ time: they would fight over the same Deployment.
   order of magnitude slower. That trade-off is the point, not a bug.
 - **The arbiter is a single process.** If it dies, nothing scales; the cluster simply freezes where
   it is. Leader election is future work.
+- **Single-pair HPA results are not evidence.** The first comparison (n=1) favoured the HPA
+  (5.25% vs 11.73% failures); its decision logs show the predictive arm never produced a value
+  because the 4.5-minute spike is shorter than its 10-minute warm-up. The demand arm and asymmetric
+  scaling were added in response; see `results/summary.md` for the repeated comparison.
 - **The predictive arm needs history** — about 10 minutes for a trend, ~20 minutes for the seasonal
   pattern. The reactive arm covers that window.
 - **Holt-Winters only predicts shapes it has seen.** A genuinely novel spike is the reactive arm's

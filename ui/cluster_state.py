@@ -36,6 +36,9 @@ def build_state(nodes, pods):
         "summary": {
             "pods": len(pods),
             "ready": sum(1 for p in pods if p.get("ready")),
+            # capacity is about the autoscaled app only, not the mock services sharing the cluster
+            "app_pods": sum(1 for p in pods if p.get("app") == "playback-api"),
+            "app_ready": sum(1 for p in pods if p.get("app") == "playback-api" and p.get("ready")),
             "schedulable_nodes": schedulable,
         },
     }

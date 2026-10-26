@@ -3,7 +3,7 @@ import time
 
 import requests
 
-from config import DEPLOYMENT, HISTORY_MINUTES, NAMESPACE, PROM_URL, STEP_SECONDS
+from config import DEMAND_WINDOW_MINUTES, DEPLOYMENT, HISTORY_MINUTES, NAMESPACE, PROM_URL, STEP_SECONDS
 
 _APP = f'namespace="{NAMESPACE}",container="{DEPLOYMENT}"'
 
@@ -17,6 +17,10 @@ CPU_UTILIZATION_QUERY = (
 # pods the scheduler cannot place (phase=Pending would also count ContainerCreating)
 UNSCHEDULABLE_QUERY = (
     f'sum(kube_pod_status_unschedulable{{namespace="{NAMESPACE}",pod=~"{DEPLOYMENT}-.*"}}) or vector(0)'
+)
+# user-visible damage: 95th percentile request latency, for the demo page
+P95_QUERY = (
+    f'histogram_quantile(0.95, sum(rate(playback_request_seconds_bucket{{service="{DEPLOYMENT}"}}[1m])) by (le))'
 )
 
 
@@ -55,3 +59,14 @@ def current_rps():
 
 def rps_history(minutes=HISTORY_MINUTES, step_seconds=STEP_SECONDS):
     return [v for _, v in range_query(RPS_QUERY, minutes, step_seconds)]
+
+
+def recent_rps(minutes=DEMAND_WINDOW_MINUTES, step_seconds=STEP_SECONDS):
+    """Short window of the request rate for the demand arm (no 10-minute warm-up needed)."""
+    return rps_history(minutes, step_seconds)
+
+
+def p95_latency_ms():
+    """None when Prometheus has no data (no recent traffic) - unknown, not zero."""
+    seconds = instant(P95_QUERY, allow_empty=False)
+    return None if seconds != seconds else seconds * 1000  # NaN: no requests in the window

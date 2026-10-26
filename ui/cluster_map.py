@@ -5,6 +5,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from cluster_state import build_state
+from config import RPS_PER_POD
+from story import ARMS, events_from_rows, narrate, verdict
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -54,20 +56,46 @@ def read_cluster():
     return nodes, pods
 
 
-def last_decision(path=None):
+def recent_decisions(path=None, limit=300):
     path = Path(path or DECISION_LOG)
     if not path.exists():
-        return None
+        return []
     with path.open(newline="") as f:
-        rows = list(csv.DictReader(f))
+        return list(csv.DictReader(f))[-limit:]
+
+
+def last_decision(path=None):
+    rows = recent_decisions(path, limit=1)
     return rows[-1] if rows else None
+
+
+def p95_ms():
+    try:
+        from metrics_source import p95_latency_ms
+        return p95_latency_ms()
+    except Exception:  # Prometheus down or no traffic yet: show "-", never break the page
+        return None
 
 
 @app.get("/api/state")
 def state():
     nodes, pods = read_cluster()
     payload = build_state(nodes, pods)
-    payload["decision"] = last_decision()
+    rows = recent_decisions()
+    decision = rows[-1] if rows else None
+    payload["decision"] = decision
+    ready = payload["summary"]["app_ready"]
+    rps = float(decision["observed_rps"]) if decision and decision.get("observed_rps") else 0.0
+    payload["story"] = {
+        **narrate(decision),
+        "verdict": verdict(rps, ready, RPS_PER_POD),
+        "traffic_rps": rps,
+        "capacity_rps": ready * RPS_PER_POD,
+        "rps_per_pod": RPS_PER_POD,
+        "arms": {a: (decision or {}).get(f"{a}_target") or None for a in ARMS},
+        "events": events_from_rows(rows)[-8:],
+        "p95_ms": p95_ms(),
+    }
     return JSONResponse(payload)
 
 

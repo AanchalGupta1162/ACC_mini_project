@@ -20,7 +20,15 @@ SAFETY_MARGIN = float(os.environ.get("SAFETY_MARGIN", "1.2"))
 # loop timing
 CYCLE_SECONDS = float(os.environ.get("CYCLE_SECONDS", "15"))
 PREDICTIVE_INTERVAL_SECONDS = float(os.environ.get("PREDICTIVE_INTERVAL_SECONDS", "30"))
-COOLDOWN_SECONDS = float(os.environ.get("COOLDOWN_SECONDS", "20"))
+# scale-up is never delayed; scale-down waits this long after the last change (HPA's asymmetry, shorter for the demo)
+SCALE_DOWN_COOLDOWN_SECONDS = float(os.environ.get("SCALE_DOWN_COOLDOWN_SECONDS", "60"))
+# promote a warm reserve node when the target is within this many pods of the schedulable capacity
+PREWARM_HEADROOM_PODS = int(os.environ.get("PREWARM_HEADROOM_PODS", "2"))
+
+# demand arm: observed request rate projected forward by the pod startup lead time
+DEMAND_LEAD_SECONDS = float(os.environ.get("DEMAND_LEAD_SECONDS", "45"))  # ~20s warm-up + scheduling + one cycle
+DEMAND_WINDOW_MINUTES = float(os.environ.get("DEMAND_WINDOW_MINUTES", "1.5"))
+DEMAND_MIN_POINTS = int(os.environ.get("DEMAND_MIN_POINTS", "3"))
 
 # forecasting
 HISTORY_MINUTES = float(os.environ.get("HISTORY_MINUTES", "30"))

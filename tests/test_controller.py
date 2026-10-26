@@ -1,5 +1,6 @@
 import csv
 
+from config import SCALE_DOWN_COOLDOWN_SECONDS
 from controller import Controller
 from decision_log import FIELDS, DecisionLog
 
@@ -81,14 +82,24 @@ def test_cold_path_builds_a_node_when_the_pool_is_empty(tmp_path):
     assert ("cold_node",) in cluster.calls
 
 
-def test_cooldown_applies_across_cycles(tmp_path):
+def test_scale_up_is_not_delayed_across_cycles(tmp_path):
     cluster, clock = FakeCluster(replicas=3), Clock()
     targets = iter([6, 8])
     controller = Controller(cluster, reactive_fn=lambda current: next(targets), clock=clock, fault_dir=tmp_path)
     controller.run_cycle()
     clock.t += 15
     controller.run_cycle()
-    assert cluster.calls == [("replicas", 6)]
+    assert [c for c in cluster.calls if c[0] == "replicas"] == [("replicas", 6), ("replicas", 8)]
+
+
+def test_scale_down_cooldown_applies_across_cycles(tmp_path):
+    cluster, clock = FakeCluster(replicas=8), Clock()
+    targets = iter([6, 4])
+    controller = Controller(cluster, reactive_fn=lambda current: next(targets), clock=clock, fault_dir=tmp_path)
+    controller.run_cycle()
+    clock.t += SCALE_DOWN_COOLDOWN_SECONDS / 2
+    controller.run_cycle()
+    assert [c for c in cluster.calls if c[0] == "replicas"] == [("replicas", 6)]
 
 
 def test_fault_file_kills_an_arm_live(tmp_path):
@@ -148,3 +159,33 @@ def test_cycle_logs_a_blank_observed_rps_when_the_metric_read_fails(tmp_path):
     log.close()
     row = list(csv.DictReader(open(path)))[0]
     assert row["observed_rps"] == ""
+
+
+def test_demand_arm_drives_the_cycle_and_is_logged(tmp_path):
+    path = tmp_path / "decisions.csv"
+    log = DecisionLog(path)
+    cluster = FakeCluster(replicas=2)
+    d = Controller(cluster, reactive_fn=lambda current: 2, demand_arm=FakeArm(9), log=log,
+                   clock=Clock(), fault_dir=tmp_path).run_cycle()
+    log.close()
+    assert d.target == 9
+    assert [c for c in cluster.calls if c[0] == "replicas"] == [("replicas", 9)]
+    assert list(csv.DictReader(open(path)))[0]["demand_target"] == "9"
+
+
+def test_demand_arm_can_be_killed_by_fault_injection(tmp_path):
+    (tmp_path / "fault-demand").touch()
+    cluster = FakeCluster(replicas=2)
+    d = Controller(cluster, reactive_fn=lambda current: 3, demand_arm=FakeArm(9),
+                   clock=Clock(), fault_dir=tmp_path).run_cycle()
+    assert d.target == 3
+
+
+def test_decision_log_rotates_a_file_written_with_an_older_header(tmp_path):
+    path = tmp_path / "decisions.csv"
+    path.write_text("timestamp,observed_rps,target\n1,2,3\n")
+    log = DecisionLog(path)
+    log.write({k: "" for k in FIELDS})
+    log.close()
+    assert list(csv.reader(open(path)))[0] == FIELDS
+    assert (tmp_path / "decisions.csv.old").exists()

@@ -27,7 +27,7 @@ def test_an_abstaining_arm_is_published_as_minus_one_so_the_graph_stays_readable
 
 
 def test_both_arms_down_publishes_no_target():
-    publish(None, None, Decision(None, False, 0, 0, 0, "BOTH arms abstained"), forecast_rps=None)
+    publish(None, None, Decision(None, False, 0, 0, 0, "ALL arms abstained"), forecast_rps=None)
     assert sample("autoscaler_final_target") == -1
     assert sample("autoscaler_forecast_rps") == -1
 
@@ -38,3 +38,12 @@ def test_node_moves_are_counted():
     publish(12, 12, Decision(12, True, 2, 0, 1, "promote and build"))
     assert sample("autoscaler_reserve_promotions_total") == before_warm + 2
     assert sample("autoscaler_cold_nodes_total") == before_cold + 1
+
+
+def test_demand_arm_is_published_and_minus_one_when_it_abstains():
+    Exporter.publish(Decision(6, True, 0, 0, 0, "scale"), 3, 4, 50.0, 4, 2, demand=6)
+    assert sample("autoscaler_demand_target") == 6
+    assert sample("autoscaler_arm_up", {"arm": "demand"}) == 1
+    Exporter.publish(Decision(4, True, 0, 0, 0, "scale"), 3, 4, 50.0, 4, 2, demand=None)
+    assert sample("autoscaler_demand_target") == -1
+    assert sample("autoscaler_arm_up", {"arm": "demand"}) == 0

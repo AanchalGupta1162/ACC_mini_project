@@ -10,13 +10,15 @@ over clever.
 
 ## What this is
 
-A Kubernetes autoscaler with two arms that run side by side:
+A Kubernetes autoscaler with three arms that run side by side:
 
 - **reactive arm** (`engine/reactive.py`, every 15s) — reproduces HPA logic on CPU-vs-request,
   plus a term for pods the scheduler cannot place.
 - **predictive arm** (`engine/predictive.py`, every 30s) — Holt-Winters forecast of request rate
   at T+2min, converted to replicas through a calibrated RPS-per-pod figure.
-- **arbiter** (`engine/arbiter.py`) — takes `max()` of the two and decides replicas, node
+- **demand arm** (`engine/demand.py`, every 15s) — observed request rate projected forward by the
+  pod startup lead; works from the first minute, no warm-up.
+- **arbiter** (`engine/arbiter.py`) — takes `max()` of the arms and decides replicas, node
   promotions and cold-node builds.
 
 Extra k3d worker nodes sit cordoned with the image pre-pulled (a warm reserve pool), so capacity
@@ -28,7 +30,7 @@ becomes schedulable in seconds rather than a node build.
 make setup     # venv + deps
 make test      # unit tests, no cluster needed  -> run this before every commit
 make all       # k3d cluster + app + Prometheus/Grafana + dashboard (~10 min)
-make engine    # the engine (both arms)
+make engine    # the engine (reactive + predictive + demand)
 make ui        # live cluster map -> http://localhost:8000
 make reset     # back to the demo baseline between runs
 ```

@@ -74,3 +74,22 @@ def test_actuals_from_rows_skips_cycles_with_no_reading():
             {"timestamp": "115.0", "observed_rps": "12.0"},
             {"timestamp": "130.0"}]
     assert actuals_from_rows(rows) == [(115.0, 12.0)]
+
+
+def test_summary_rows_groups_by_mode_and_reports_n():
+    from exp_metrics import summary_rows
+    rows = [
+        {"mode": "hpa", "p95_ms": "1000", "failed_pct": "5"},
+        {"mode": "hpa", "p95_ms": "1200", "failed_pct": "7"},
+        {"mode": "full", "p95_ms": "10", "failed_pct": "0"},
+    ]
+    out = {r["mode"]: r for r in summary_rows(rows, ["p95_ms", "failed_pct"])}
+    assert out["hpa"]["n"] == 2
+    assert out["hpa"]["p95_ms"] == (1100.0, pytest.approx(141.42, abs=0.01))
+    assert out["full"]["n"] == 1 and out["full"]["failed_pct"] == (0.0, 0.0)
+
+
+def test_summary_rows_ignores_missing_values():
+    from exp_metrics import summary_rows
+    rows = [{"mode": "hpa", "time_to_capacity_s": ""}, {"mode": "hpa", "time_to_capacity_s": "30"}]
+    assert summary_rows(rows, ["time_to_capacity_s"])[0]["time_to_capacity_s"] == (30.0, 0.0)
